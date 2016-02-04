@@ -93,7 +93,16 @@ let rec g env e = (* 型推論ルーチン (caml2html: typing_g) *)
     | Neg(e) ->
 	unify Type.Int (g env e);
 	Type.Int
-    | Add(e1, e2) | Sub(e1, e2) -> (* 足し算（と引き算）の型推論 (caml2html: typing_add) *)
+    | Add(e1, e2) ->
+    (try
+        unify Type.Int (g env e1);
+        unify Type.Int (g env e2);
+        Type.Int
+    with _ ->
+        unify Type.Float (g env e1);
+        unify Type.Float (g env e2);
+        Type.Float)
+    | Sub(e1, e2) -> (* 足し算（と引き算）の型推論 (caml2html: typing_add) *)
 	unify Type.Int (g env e1);
 	unify Type.Int (g env e2);
 	Type.Int
@@ -150,6 +159,31 @@ let rec g env e = (* 型推論ルーチン (caml2html: typing_g) *)
 	Type.Unit
   with Unify(t1, t2) -> raise (Error(deref_term e, deref_typ t1, deref_typ t2))
 
+
+let rec r env e =
+    match e with
+    | Not(e) -> Not(r env e)
+    | Neg(e) -> Neg(r env e)
+    | Add(e1, e2) -> (try unify Type.Int (g env e1); Add(r env e1, r env e2) with _ -> FAdd(r env e1, r env e2))
+    | Sub(e1, e2) -> Sub(r env e1, r env e2)
+    | FNeg(e) -> FNeg(r env e)
+    | FAdd(e1, e2) -> FAdd(r env e1, r env e2)
+    | FSub(e1, e2) -> FSub(r env e1, r env e2)
+    | Eq(e1, e2) -> Eq(r env e1, r env e2)
+    | LE(e1, e2) -> LE(r env e1, r env e2)
+    | If(e1, e2, e3) -> If(r env e1, r env e2, r env e3)
+    | Let((x, t), e1, e2) -> Let((x, t), r env e1, (r (M.add x t env) e2))
+    | LetRec({ name = (x, t); args = yts; body = e1 }, e2) ->
+    let env = M.add x t env in
+    LetRec({ name = (x, t); args = yts; body = (r (M.add_list yts env) e1)}, r env e2);
+    | App(e, es) -> App(r env e, List.map (r env) es)
+    | Tuple(es) -> Tuple(List.map (r env) es)
+    | LetTuple(xts, e1, e2) -> LetTuple(xts, r env e1, r (M.add_list xts env) e2)
+    | Array(e1, e2) -> Array(r env e1, r env e2)
+    | Get(e1, e2) -> Get(r env e1, r env e2)
+    | Put(e1, e2, e3) -> Put(r env e1, r env e2, r env e3)
+    | e -> e
+
 let f e =
   extenv := M.empty;
 (*
@@ -159,5 +193,6 @@ let f e =
 *)
   (try unify Type.Unit (g M.empty e)
   with Unify _ -> failwith "top level does not have type unit");
+  let e = r M.empty e in
   extenv := M.map deref_typ !extenv;
   deref_term e
